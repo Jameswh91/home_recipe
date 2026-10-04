@@ -9,13 +9,14 @@ const safeEqual = (a: string, b: string) => {
 };
 
 export function proxy(request: NextRequest) {
-  const password = process.env.APP_PASSWORD;
+  // Trimmed: a pasted env var often carries a stray trailing space/newline that Vercel hides for sensitive values.
+  const password = process.env.APP_PASSWORD?.trim();
   if (!password) return new NextResponse("APP_PASSWORD is not configured", { status: 503 });
 
   const header = request.headers.get("authorization") ?? "";
   if (header.startsWith("Basic ")) {
     const decoded = Buffer.from(header.slice(6), "base64").toString();
-    const supplied = decoded.slice(decoded.indexOf(":") + 1);
+    const supplied = decoded.slice(decoded.indexOf(":") + 1).trim();
     if (safeEqual(supplied, password)) return NextResponse.next();
   }
   return new NextResponse("Authentication required", {
