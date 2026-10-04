@@ -32,6 +32,14 @@ const fail = (message: string) => ({
 const MEAL_TYPES = ["breakfast", "lunch", "dinner", "dessert", "snack", "side"] as const;
 const DIFFICULTIES = ["easy", "medium", "hard"] as const;
 
+const ingredientSchema = z.object({
+  name: z.string().min(1),
+  quantity: z.number().min(0).optional(),
+  unit: z.string().optional(),
+  aisle: z.string().optional(),
+  notes: z.string().optional(),
+});
+
 const LIST_COLUMNS =
   "id, name, description, servings, prep_minutes, cook_minutes, tags, meal_types, difficulty, rating, is_seed";
 
@@ -151,17 +159,7 @@ server.registerTool(
       difficulty: z.enum(DIFFICULTIES).optional(),
       tags: z.array(z.string()).default([]),
       source_url: z.string().url().optional(),
-      ingredients: z
-        .array(
-          z.object({
-            name: z.string().min(1),
-            quantity: z.number().min(0).optional(),
-            unit: z.string().optional(),
-            aisle: z.string().optional(),
-            notes: z.string().optional(),
-          }),
-        )
-        .min(1),
+      ingredients: z.array(ingredientSchema).min(1),
     },
   },
   async ({ ingredients, ...recipe }) => {
@@ -198,6 +196,97 @@ server.registerTool(
       .maybeSingle();
     if (error) return fail(error.message);
     return data ? json(data) : fail("Recipe not found");
+  },
+);
+
+server.registerTool(
+  "update_recipe",
+  {
+    description:
+      "Edit an existing recipe. Only the fields you pass are changed; pass null to clear an optional field. " +
+      "If you pass `ingredients` it REPLACES the whole ingredient list, so send every ingredient, not just the changed one. " +
+      "Use get_recipe first to see the current values. Use rate_recipe to change the rating.",
+    inputSchema: {
+      id: z.string().uuid(),
+      name: z.string().min(1).optional(),
+      description: z.string().nullable().optional(),
+      servings: z.number().int().positive().optional(),
+      prep_minutes: z.number().int().min(0).nullable().optional(),
+      cook_minutes: z.number().int().min(0).nullable().optional(),
+      instructions: z.string().nullable().optional().describe("Step-by-step method, one step per line"),
+      meal_types: z.array(z.enum(MEAL_TYPES)).optional(),
+      difficulty: z.enum(DIFFICULTIES).nullable().optional(),
+      tags: z.array(z.string()).optional(),
+      source_url: z.string().url().nullable().optional(),
+      ingredients: z.array(ingredientSchema).min(1).optional().describe("Full replacement ingredient list"),
+    },
+  },
+  async ({ id, ingredients, ...fields }) => {
+    const changes = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+    if (!Object.keys(changes).length && !ingredients) return fail("Nothing to update");
+
+    const { data: existing, error: findError } = await db
+      .from("recipes")
+      .select("id, name")
+      .eq("id", id)
+      .maybeSingle();
+    if (findError) return fail(findError.message);
+    if (!existing) return fail("Recipe not found");
+
+    if (Object.keys(changes).length) {
+      const { error } = await db.from("recipes").update(changes).eq("id", id);
+      if (error) {
+        return fail(
+          error.code === "23505" ? `A recipe called "${fields.name}" already exists` : error.message,
+        );
+      }
+    }
+
+    if (ingredients) {
+      // No transactions in supabase-js: snapshot, swap, and restore the snapshot if the insert fails.
+      const { data: old, error: oldError } = await db
+        .from("ingredients")
+        .select("recipe_id, name, quantity, unit, aisle, notes")
+        .eq("recipe_id", id);
+      if (oldError) return fail(`Recipe fields updated, ingredients untouched: ${oldError.message}`);
+      const { error: delError } = await db.from("ingredients").delete().eq("recipe_id", id);
+      if (delError) return fail(`Recipe fields updated, ingredients untouched: ${delError.message}`);
+      const { error: insError } = await db
+        .from("ingredients")
+        .insert(ingredients.map((i) => ({ ...i, recipe_id: id })));
+      if (insError) {
+        const { error: restoreError } = await db.from("ingredients").insert(old ?? []);
+        return fail(
+          `Ingredients failed (${insError.message}); ` +
+            (restoreError
+              ? `RESTORE ALSO FAILED, ingredients were lost: ${restoreError.message}`
+              : "original ingredients restored. Recipe fields were updated."),
+        );
+      }
+    }
+
+    const { data, error } = await db.from("recipes").select("*, ingredients(*)").eq("id", id).single();
+    return error ? fail(error.message) : json(data);
+  },
+);
+
+server.registerTool(
+  "delete_recipe",
+  {
+    description:
+      "Permanently delete a recipe and its ingredients. Cannot be undone. " +
+      "Confirm with the user before calling, and look the recipe up first so you delete the right one.",
+    inputSchema: { id: z.string().uuid() },
+  },
+  async ({ id }) => {
+    const { data, error } = await db
+      .from("recipes")
+      .delete()
+      .eq("id", id)
+      .select("id, name")
+      .maybeSingle();
+    if (error) return fail(error.message);
+    return data ? json({ deleted: data }) : fail("Recipe not found");
   },
 );
 

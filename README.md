@@ -15,6 +15,8 @@ build a weekly meal plan and a shopping list from it.
 | `get_shopping_list` | Scaled, merged shopping list grouped by aisle for a set of recipes |
 | `add_recipe` | Add a recipe + ingredients (with meal types, difficulty, method) |
 | `rate_recipe` | Set a 1-5 rating |
+| `update_recipe` | Edit fields; passing `ingredients` replaces the whole list |
+| `delete_recipe` | Permanently delete a recipe and its ingredients |
 
 ## Setup (Claude desktop, Node 20+)
 1. `cp .env.example .env` and fill in `SUPABASE_SERVICE_ROLE_KEY`
