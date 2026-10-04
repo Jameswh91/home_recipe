@@ -10,10 +10,10 @@ build a weekly meal plan and a shopping list from it.
 ## Tools
 | Tool | Purpose |
 |---|---|
-| `list_recipes` | Browse/filter recipes (tags, search, max minutes, min rating) |
+| `list_recipes` | Browse/filter recipes (meal type, difficulty, tags, search, max minutes, min rating) |
 | `get_recipe` | Full recipe with ingredients and instructions |
 | `get_shopping_list` | Scaled, merged shopping list grouped by aisle for a set of recipes |
-| `add_recipe` | Add a recipe + ingredients |
+| `add_recipe` | Add a recipe + ingredients (with meal types, difficulty, method) |
 | `rate_recipe` | Set a 1-5 rating |
 
 ## Setup (Claude desktop, Node 20+)
@@ -37,6 +37,7 @@ build a weekly meal plan and a shopping list from it.
 - `npm run typecheck` / `npm test` (in `server/`)
 
 ## Notes
+- Recipes created before the `is_seed` migration are flagged `is_seed = true` (placeholder data). Once real recipes are loaded: `delete from recipes where is_seed;`
 - `.env` is gitignored. The server reads it from the repo root.
 - Tables have RLS on with no policies by design: only the service role can access them.
 - Mobile later: needs a hosted remote MCP server with auth (not built yet).

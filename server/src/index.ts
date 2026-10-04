@@ -29,24 +29,34 @@ const fail = (message: string) => ({
   content: [{ type: "text" as const, text: message }],
 });
 
+const MEAL_TYPES = ["breakfast", "lunch", "dinner", "dessert", "snack", "side"] as const;
+const DIFFICULTIES = ["easy", "medium", "hard"] as const;
+
 const LIST_COLUMNS =
-  "id, name, description, servings, prep_minutes, cook_minutes, tags, rating";
+  "id, name, description, servings, prep_minutes, cook_minutes, tags, meal_types, difficulty, rating, is_seed";
 
 server.registerTool(
   "list_recipes",
   {
     description:
       "List recipes (without ingredients or instructions). Use this to pick meals for a plan. " +
-      "Optionally filter by tag, search text, max total minutes or minimum rating.",
+      "Optionally filter by meal type, difficulty, tag, search text, max total minutes or minimum rating.",
     inputSchema: {
+      meal_type: z.enum(MEAL_TYPES).optional().describe("Recipe must be tagged with this meal type"),
+      difficulty: z
+        .array(z.enum(DIFFICULTIES))
+        .optional()
+        .describe("Recipe difficulty must be ONE of these, e.g. ['easy','medium']"),
       tags: z.array(z.string()).optional().describe("Recipe must have ALL of these tags"),
       search: z.string().optional().describe("Case-insensitive match on the recipe name"),
       max_minutes: z.number().int().positive().optional().describe("Max prep + cook minutes"),
       min_rating: z.number().int().min(1).max(5).optional(),
     },
   },
-  async ({ tags, search, max_minutes, min_rating }) => {
+  async ({ meal_type, difficulty, tags, search, max_minutes, min_rating }) => {
     let q = db.from("recipes").select(LIST_COLUMNS).order("name");
+    if (meal_type) q = q.contains("meal_types", [meal_type]);
+    if (difficulty?.length) q = q.in("difficulty", difficulty);
     if (tags?.length) q = q.contains("tags", tags);
     if (search) q = q.ilike("name", `%${search.replace(/[%_]/g, "\\$&")}%`);
     if (min_rating) q = q.gte("rating", min_rating);
@@ -136,7 +146,9 @@ server.registerTool(
       servings: z.number().int().positive().default(4),
       prep_minutes: z.number().int().min(0).optional(),
       cook_minutes: z.number().int().min(0).optional(),
-      instructions: z.string().optional(),
+      instructions: z.string().optional().describe("Step-by-step method, one step per line"),
+      meal_types: z.array(z.enum(MEAL_TYPES)).default([]),
+      difficulty: z.enum(DIFFICULTIES).optional(),
       tags: z.array(z.string()).default([]),
       source_url: z.string().url().optional(),
       ingredients: z
