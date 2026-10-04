@@ -42,4 +42,5 @@ build a weekly meal plan and a shopping list from it.
 - Recipes created before the `is_seed` migration are flagged `is_seed = true` (placeholder data). Once real recipes are loaded: `delete from recipes where is_seed;`
 - `.env` is gitignored. The server reads it from the repo root.
 - Tables have RLS on with no policies by design: only the service role can access them.
+- Manual test checklist: see `TESTING.md`.
 - Mobile later: needs a hosted remote MCP server with auth (not built yet).
