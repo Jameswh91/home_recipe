@@ -40,8 +40,22 @@ const ingredientSchema = z.object({
   notes: z.string().optional(),
 });
 
+// Nutrition is per serving. null = not printed / unknown.
+const extraFields = {
+  kcal_per_serving: z.number().int().min(0),
+  carbs_g: z.number().min(0),
+  protein_g: z.number().min(0),
+  fat_g: z.number().min(0),
+  freezable: z.boolean().describe("Can be frozen"),
+  freezer_months: z.number().int().positive().describe("Max months in the freezer; requires freezable"),
+  fridge_days: z.number().int().positive(),
+  reheating: z.string(),
+  is_base_recipe: z.boolean().describe("A batch base that other recipes build on"),
+  is_multi_serve: z.boolean().describe("Cooked in a batch and eaten over several meals"),
+};
+
 const LIST_COLUMNS =
-  "id, name, description, servings, prep_minutes, cook_minutes, tags, meal_types, difficulty, rating, is_seed";
+  "id, name, description, servings, prep_minutes, cook_minutes, tags, meal_types, difficulty, rating, is_seed, kcal_per_serving, carbs_g, protein_g, fat_g, freezable, is_base_recipe, is_multi_serve";
 
 server.registerTool(
   "list_recipes",
@@ -159,6 +173,16 @@ server.registerTool(
       difficulty: z.enum(DIFFICULTIES).optional(),
       tags: z.array(z.string()).default([]),
       source_url: z.string().url().optional(),
+      kcal_per_serving: extraFields.kcal_per_serving.optional(),
+      carbs_g: extraFields.carbs_g.optional(),
+      protein_g: extraFields.protein_g.optional(),
+      fat_g: extraFields.fat_g.optional(),
+      freezable: extraFields.freezable.optional(),
+      freezer_months: extraFields.freezer_months.optional(),
+      fridge_days: extraFields.fridge_days.optional(),
+      reheating: extraFields.reheating.optional(),
+      is_base_recipe: extraFields.is_base_recipe.optional(),
+      is_multi_serve: extraFields.is_multi_serve.optional(),
       ingredients: z.array(ingredientSchema).min(1),
     },
   },
@@ -218,6 +242,16 @@ server.registerTool(
       difficulty: z.enum(DIFFICULTIES).nullable().optional(),
       tags: z.array(z.string()).optional(),
       source_url: z.string().url().nullable().optional(),
+      kcal_per_serving: extraFields.kcal_per_serving.nullable().optional(),
+      carbs_g: extraFields.carbs_g.nullable().optional(),
+      protein_g: extraFields.protein_g.nullable().optional(),
+      fat_g: extraFields.fat_g.nullable().optional(),
+      freezable: extraFields.freezable.optional(),
+      freezer_months: extraFields.freezer_months.nullable().optional(),
+      fridge_days: extraFields.fridge_days.nullable().optional(),
+      reheating: extraFields.reheating.nullable().optional(),
+      is_base_recipe: extraFields.is_base_recipe.optional(),
+      is_multi_serve: extraFields.is_multi_serve.optional(),
       ingredients: z.array(ingredientSchema).min(1).optional().describe("Full replacement ingredient list"),
     },
   },
