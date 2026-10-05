@@ -27,13 +27,26 @@ export async function POST(request: Request) {
   if (!kind) return NextResponse.json({ error: "Use a JPEG, PNG or WebP image" }, { status: 415 });
 
   try {
-    const extraction = await extractRecipe(bytes, kind.type);
+    const { extraction, model, usage } = await extractRecipe(bytes, kind.type);
     const imagePath = `${randomUUID()}.${kind.ext}`;
     const upload = await db().storage.from(BUCKET).upload(imagePath, bytes, { contentType: kind.type });
     if (upload.error) throw new Error(`Saving the photo failed: ${upload.error.message}`);
 
+    const scored = scoreExtraction(extraction);
+    // The import log row is created now (not at confirm) so the server holds the model's original
+    // answer; the client never has to send it back.
+    const { data: log, error: logError } = await db()
+      .from("recipe_imports")
+      .insert({ image_path: imagePath, model, usage, extracted: extraction, scored })
+      .select("id")
+      .single();
+    if (logError) {
+      await db().storage.from(BUCKET).remove([imagePath]);
+      throw new Error(`Recording the import failed: ${logError.message}`);
+    }
+
     const existing = extraction.recipe.name.trim() ? await findByName(extraction.recipe.name) : null;
-    return NextResponse.json({ imagePath, extraction, scored: scoreExtraction(extraction), existing });
+    return NextResponse.json({ importId: log.id, extraction, scored, existing });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Extraction failed";
     console.error("extract failed:", e);

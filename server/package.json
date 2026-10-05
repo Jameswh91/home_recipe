@@ -6,7 +6,7 @@
     "start": "tsx src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsx src/shopping.test.ts"
+    "test": "tsx src/shopping.test.ts && tsx src/plan.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.0",
