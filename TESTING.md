@@ -92,3 +92,12 @@ Use a Monday for the week start.
 - Output wording is readable, not a raw JSON dump.
 - Claude doesn't make unnecessary extra tool calls.
 - Write actions confirm or report clearly what changed.
+
+### Shopping list page
+
+Needs the same data as the plan tests above (a saved week plan).
+
+- [ ] **37.** Open `/shopping` -> same week as `/plan`, grouped by aisle (A-Z, "Other" last). Quantities match "Shopping list for next week's plan" in Claude (test 30).
+- [ ] **38.** Tick a few items, reload -> they stay ticked and struck through; the "N of M left" count updates. Open the same week on another device -> not ticked there (per-device by design).
+- [ ] **39.** "Clear ticks" -> all unticked. Previous/Next change the week and each week keeps its own ticks.
+- [ ] **40.** A week with no plan -> "Nothing planned for this week". On a phone, rows are easy to tap and nothing scrolls sideways.

@@ -12,6 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <nav className="topnav" aria-label="Main">
           <Link href="/">Import</Link>
           <Link href="/plan">Plan</Link>
+          <Link href="/shopping">Shopping</Link>
         </nav>
         {children}
       </body>
