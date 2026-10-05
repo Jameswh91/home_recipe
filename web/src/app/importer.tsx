@@ -13,7 +13,7 @@ type Form = {
   is_base_recipe: boolean; is_multi_serve: boolean;
   ingredients: FormIngredient[];
 };
-type Extracted = { imagePath: string; extraction: Extraction; scored: Scored; existing: { id: string; name: string } | null };
+type Extracted = { importId: string; extraction: Extraction; scored: Scored; existing: { id: string; name: string } | null };
 type Step = "idle" | "extracting" | "review" | "saving" | "saved";
 
 const str = (n: number | string | null | undefined) => (n === null || n === undefined ? "" : String(n));
@@ -124,7 +124,7 @@ export function Importer() {
   }
 
   async function discard() {
-    if (data) await post("/api/discard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ imagePath: data.imagePath }) });
+    if (data) await post("/api/discard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ importId: data.importId }) });
     reset();
   }
 
@@ -133,7 +133,7 @@ export function Importer() {
     setError([]); setStep("saving");
     const res = await post<{ name: string; existing?: Extracted["existing"] }>("/api/import", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ imagePath: data.imagePath, recipe: toPayload(form), mode }),
+      body: JSON.stringify({ importId: data.importId, recipe: toPayload(form), mode }),
     });
     if (res.ok) { setSavedName(res.body.name); setStep("saved"); return; }
     if (res.status === 409 && res.body.existing) setExisting(res.body.existing);

@@ -95,8 +95,10 @@ export const recipeInputSchema = z.object({
 export type RecipeInput = z.infer<typeof recipeInputSchema>;
 
 export const importRequestSchema = z.object({
-  imagePath: z.string().regex(/^[0-9a-f-]{36}\.(jpg|png|webp)$/),
+  importId: z.string().uuid(),
   recipe: recipeInputSchema,
   /** `create` fails with 409 if the name exists; `overwrite` replaces that recipe (keeps its rating). */
   mode: z.enum(["create", "overwrite"]),
 });
+
+export const discardRequestSchema = z.object({ importId: z.string().uuid() });

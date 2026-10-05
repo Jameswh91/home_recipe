@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createClient } from "@supabase/supabase-js";
 import { config } from "dotenv";
 import { z } from "zod";
+import { isIsoDate, PLAN_MEALS, toDbEntries, totalServingsByRecipe } from "./plan.js";
 import { buildShoppingList, type IngredientRow } from "./shopping.js";
 
 // quiet: stdout is the MCP channel, so dotenv must not print anything.
@@ -56,6 +57,40 @@ const extraFields = {
 
 const LIST_COLUMNS =
   "id, name, description, servings, prep_minutes, cook_minutes, tags, meal_types, difficulty, rating, is_seed, kcal_per_serving, carbs_g, protein_g, fat_g, freezable, is_base_recipe, is_multi_serve";
+
+
+const ISO_DATE = z.string().refine(isIsoDate, "Use a real date as YYYY-MM-DD");
+
+/** Scaled, merged, aisle-grouped list for recipes at given servings (shared by the list tools). */
+type ShoppingResult = { error: string } | { list: ReturnType<typeof buildShoppingList> };
+
+async function shoppingListFor(recipes: { recipe_id: string; servings?: number }[]): Promise<ShoppingResult> {
+  const ids = [...new Set(recipes.map((r) => r.recipe_id))];
+  const [recipeRes, ingRes] = await Promise.all([
+    db.from("recipes").select("id, name, servings").in("id", ids),
+    db.from("ingredients").select("recipe_id, name, quantity, unit, aisle, notes").in("recipe_id", ids),
+  ]);
+  if (recipeRes.error) return { error: recipeRes.error.message };
+  if (ingRes.error) return { error: ingRes.error.message };
+
+  const known = new Map(recipeRes.data.map((r) => [r.id, r]));
+  const missing = ids.filter((i) => !known.has(i));
+  if (missing.length) return { error: `Unknown recipe ids: ${missing.join(", ")}` };
+
+  // Merge duplicate recipe entries by summing servings.
+  const totals = new Map<string, number>();
+  for (const r of recipes) {
+    const base = known.get(r.recipe_id)!.servings;
+    totals.set(r.recipe_id, (totals.get(r.recipe_id) ?? 0) + (r.servings ?? base));
+  }
+  const planned = [...totals].map(([recipe_id, servings]) => {
+    const r = known.get(recipe_id)!;
+    return { recipe_id, name: r.name, recipe_servings: r.servings, servings };
+  });
+
+  const rows = ingRes.data.map((i) => ({ ...i, quantity: i.quantity === null ? null : Number(i.quantity) }));
+  return { list: buildShoppingList(planned, rows as IngredientRow[]) };
+}
 
 server.registerTool(
   "list_recipes",
@@ -128,31 +163,8 @@ server.registerTool(
     },
   },
   async ({ recipes }) => {
-    const ids = [...new Set(recipes.map((r) => r.recipe_id))];
-    const [recipeRes, ingRes] = await Promise.all([
-      db.from("recipes").select("id, name, servings").in("id", ids),
-      db.from("ingredients").select("recipe_id, name, quantity, unit, aisle, notes").in("recipe_id", ids),
-    ]);
-    if (recipeRes.error) return fail(recipeRes.error.message);
-    if (ingRes.error) return fail(ingRes.error.message);
-
-    const known = new Map(recipeRes.data.map((r) => [r.id, r]));
-    const missing = ids.filter((i) => !known.has(i));
-    if (missing.length) return fail(`Unknown recipe ids: ${missing.join(", ")}`);
-
-    // Merge duplicate recipe entries by summing servings.
-    const totals = new Map<string, number>();
-    for (const r of recipes) {
-      const base = known.get(r.recipe_id)!.servings;
-      totals.set(r.recipe_id, (totals.get(r.recipe_id) ?? 0) + (r.servings ?? base));
-    }
-    const planned = [...totals].map(([recipe_id, servings]) => {
-      const r = known.get(recipe_id)!;
-      return { recipe_id, name: r.name, recipe_servings: r.servings, servings };
-    });
-
-    const rows = ingRes.data.map((i) => ({ ...i, quantity: i.quantity === null ? null : Number(i.quantity) }));
-    return json(buildShoppingList(planned, rows as IngredientRow[]));
+    const result = await shoppingListFor(recipes);
+    return "error" in result ? fail(result.error) : json(result.list);
   },
 );
 
@@ -321,6 +333,159 @@ server.registerTool(
       .maybeSingle();
     if (error) return fail(error.message);
     return data ? json({ deleted: data }) : fail("Recipe not found");
+  },
+);
+
+// ---- People & meal planning -------------------------------------------------------------------
+
+const WEEK_NOTE = "Weeks run Monday to Sunday. Dates are YYYY-MM-DD.";
+
+server.registerTool(
+  "list_people",
+  {
+    description:
+      "List the people who eat the meal plan, with their daily kcal target and default portion " +
+      "(recipe servings per meal). Meals are shared; portions are per person.",
+    inputSchema: {},
+  },
+  async () => {
+    const { data, error } = await db
+      .from("people")
+      .select("id, name, daily_kcal_target, default_servings")
+      .order("name");
+    return error ? fail(error.message) : json(data);
+  },
+);
+
+server.registerTool(
+  "save_person",
+  {
+    description:
+      "Add a person, or update them if the name already exists (case-insensitive). " +
+      "default_servings is how many recipe servings they eat per meal unless a plan entry says otherwise " +
+      "(e.g. 1.5 for a bigger portion). daily_kcal_target is optional and only used to show daily totals.",
+    inputSchema: {
+      name: z.string().min(1),
+      daily_kcal_target: z.number().int().positive().nullable().optional(),
+      default_servings: z.number().positive().optional(),
+    },
+  },
+  async ({ name, ...fields }) => {
+    const changes = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+    const { data: existing, error: findError } = await db
+      .from("people")
+      .select("id")
+      .ilike("name", name.trim().replace(/[\\%_]/g, "\\$&"))
+      .maybeSingle();
+    if (findError) return fail(findError.message);
+
+    const q = existing
+      ? db.from("people").update({ name: name.trim(), ...changes }).eq("id", existing.id)
+      : db.from("people").insert({ name: name.trim(), ...changes });
+    const { data, error } = await q.select("id, name, daily_kcal_target, default_servings").single();
+    return error ? fail(error.message) : json({ saved: data, created: !existing });
+  },
+);
+
+server.registerTool(
+  "save_meal_plan",
+  {
+    description:
+      "Save a meal plan. REPLACES everything between `from` and `to` (inclusive) with `entries` in one " +
+      "all-or-nothing step, so send the whole range you want to end up with. Pass `meal` to replace only that " +
+      "meal across the range (e.g. swap just one dinner: from = to = that date, meal = dinner, one entry). " +
+      "Pass an empty `entries` array to clear the range. Slots are breakfast, lunch, dinner; a slot can hold " +
+      "several recipes (a main and a side). Everyone in list_people gets their default portion unless you set " +
+      "`servings` per person, e.g. { \"James\": 1.5 }; set a person to 0 if they skip that meal. " +
+      "Returns the saved plan with per-person kcal per day. " + WEEK_NOTE,
+    inputSchema: {
+      from: ISO_DATE,
+      to: ISO_DATE,
+      meal: z.enum(PLAN_MEALS).optional().describe("Only replace this meal within the range"),
+      entries: z.array(
+        z.object({
+          date: ISO_DATE,
+          meal: z.enum(PLAN_MEALS),
+          recipe_id: z.string().uuid(),
+          notes: z.string().optional(),
+          servings: z.record(z.string(), z.number().min(0)).optional().describe("Person name -> servings"),
+        }),
+      ),
+    },
+  },
+  async ({ from, to, meal, entries }) => {
+    if (from > to) return fail("`from` is after `to`");
+
+    const { data: people, error: peopleError } = await db.from("people").select("id, name, default_servings");
+    if (peopleError) return fail(peopleError.message);
+    const mapped = toDbEntries(entries, people ?? []);
+    if (!mapped.ok) return fail(mapped.error);
+
+    const recipeIds = [...new Set(entries.map((e) => e.recipe_id))];
+    if (recipeIds.length) {
+      const { data: found, error } = await db.from("recipes").select("id").in("id", recipeIds);
+      if (error) return fail(error.message);
+      const known = new Set((found ?? []).map((r) => r.id));
+      const missing = recipeIds.filter((id) => !known.has(id));
+      if (missing.length) return fail(`Unknown recipe ids: ${missing.join(", ")}`);
+    }
+
+    const { data: saved, error } = await db.rpc("replace_meal_plan", {
+      p_from: from,
+      p_to: to,
+      p_entries: mapped.entries,
+      p_meal: meal ?? null,
+    });
+    if (error) {
+      return fail(
+        error.code === "23505"
+          ? "The same recipe appears twice in one meal slot. Nothing was saved."
+          : `Nothing was saved: ${error.message}`,
+      );
+    }
+    const { data: plan, error: readError } = await db.rpc("get_meal_plan", { p_from: from, p_to: to });
+    return readError ? fail(`Saved ${saved} entries, but reading the plan back failed: ${readError.message}`) : json({ saved, plan });
+  },
+);
+
+server.registerTool(
+  "get_meal_plan",
+  {
+    description:
+      "Get the meal plan for a date range: every date (empty days included) with its breakfast, lunch and " +
+      "dinner entries, each person's servings and kcal, and each person's kcal total per day against their " +
+      "target. `entries_missing_kcal` counts recipes with no kcal on record, so a total may be understated. " +
+      "Max range is 92 days. " + WEEK_NOTE,
+    inputSchema: { from: ISO_DATE, to: ISO_DATE },
+  },
+  async ({ from, to }) => {
+    const { data, error } = await db.rpc("get_meal_plan", { p_from: from, p_to: to });
+    return error ? fail(error.message) : json(data);
+  },
+);
+
+server.registerTool(
+  "get_plan_shopping_list",
+  {
+    description:
+      "Shopping list for everything planned between two dates. Each recipe is scaled to the total servings " +
+      "eaten across all people and days, ingredients are merged by name + unit, and grouped by aisle. " +
+      "Use this instead of get_shopping_list once a plan is saved. " + WEEK_NOTE,
+    inputSchema: { from: ISO_DATE, to: ISO_DATE },
+  },
+  async ({ from, to }) => {
+    if (from > to) return fail("`from` is after `to`");
+    const { data, error } = await db
+      .from("meal_plan_entries")
+      .select("recipe_id, meal_plan_portions(servings)")
+      .gte("plan_date", from)
+      .lte("plan_date", to);
+    if (error) return fail(error.message);
+
+    const totals = totalServingsByRecipe(data ?? []);
+    if (!totals.length) return fail("Nothing is planned in that range");
+    const result = await shoppingListFor(totals);
+    return "error" in result ? fail(result.error) : json(result.list);
   },
 );
 

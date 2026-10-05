@@ -32,7 +32,9 @@ const client = new Anthropic();
 
 export class ExtractionError extends Error {}
 
-export async function extractRecipe(image: Buffer, mediaType: ImageType): Promise<Extraction> {
+export type ExtractionResult = { extraction: Extraction; model: string; usage: unknown };
+
+export async function extractRecipe(image: Buffer, mediaType: ImageType): Promise<ExtractionResult> {
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 8000,
@@ -53,5 +55,5 @@ export async function extractRecipe(image: Buffer, mediaType: ImageType): Promis
   if (response.stop_reason === "refusal") throw new ExtractionError("The model declined to read this image.");
   if (response.stop_reason === "max_tokens") throw new ExtractionError("The extraction was cut off. Try a tighter crop.");
   if (!response.parsed_output) throw new ExtractionError("Couldn't parse the model's answer. Try again.");
-  return normalizeExtraction(response.parsed_output);
+  return { extraction: normalizeExtraction(response.parsed_output), model: response.model, usage: response.usage };
 }
