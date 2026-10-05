@@ -16,10 +16,7 @@ language plpgsql
 set search_path = ''
 as $$
 declare
-  e jsonb;
-  p jsonb;
-  v_entry uuid;
-  n integer := 0;
+  n integer;
 begin
   if p_from > p_to then
     raise exception 'from (%) is after to (%)', p_from, p_to;
@@ -31,33 +28,45 @@ begin
     raise exception 'unknown meal %', p_meal;
   end if;
 
+  if exists (
+    select 1 from jsonb_array_elements(p_entries) e
+    where (e->>'plan_date')::date not between p_from and p_to
+  ) then
+    raise exception 'an entry date is outside % to %', p_from, p_to;
+  end if;
+  if p_meal is not null and exists (
+    select 1 from jsonb_array_elements(p_entries) e
+    where e->>'meal' <> p_meal
+  ) then
+    raise exception 'an entry meal does not match the % being replaced', p_meal;
+  end if;
+
   delete from public.meal_plan_entries
    where plan_date between p_from and p_to
      and (p_meal is null or meal = p_meal);
 
-  for e in select value from jsonb_array_elements(p_entries) loop
-    if (e->>'plan_date')::date not between p_from and p_to then
-      raise exception 'entry date % is outside % to %', e->>'plan_date', p_from, p_to;
-    end if;
-    if p_meal is not null and e->>'meal' <> p_meal then
-      raise exception 'entry meal % does not match the % being replaced', e->>'meal', p_meal;
-    end if;
+  insert into public.meal_plan_entries (plan_date, meal, recipe_id, notes)
+  select (e->>'plan_date')::date, e->>'meal', (e->>'recipe_id')::uuid, e->>'notes'
+  from jsonb_array_elements(p_entries) e;
+  get diagnostics n = row_count;
 
-    insert into public.meal_plan_entries (plan_date, meal, recipe_id, notes)
-    values ((e->>'plan_date')::date, e->>'meal', (e->>'recipe_id')::uuid, e->>'notes')
-    returning id into v_entry;
-
-    for p in select value from jsonb_array_elements(coalesce(e->'portions', '[]'::jsonb)) loop
-      insert into public.meal_plan_portions (entry_id, person_id, servings)
-      values (v_entry, (p->>'person_id')::uuid, (p->>'servings')::numeric);
-    end loop;
-
-    n := n + 1;
-  end loop;
+  -- Portions attach to the entry just inserted for the same (date, meal, recipe), which is unique.
+  insert into public.meal_plan_portions (entry_id, person_id, servings)
+  select en.id, (po->>'person_id')::uuid, (po->>'servings')::numeric
+  from jsonb_array_elements(p_entries) e
+  cross join lateral jsonb_array_elements(coalesce(e->'portions', '[]'::jsonb)) po
+  join public.meal_plan_entries en
+    on en.plan_date = (e->>'plan_date')::date
+   and en.meal = e->>'meal'
+   and en.recipe_id = (e->>'recipe_id')::uuid;
 
   return n;
 end;
 $$;
+
+-- Server-only, like the tables.
+revoke all on function public.replace_meal_plan(date, date, jsonb, text) from public, anon, authenticated;
+grant execute on function public.replace_meal_plan(date, date, jsonb, text) to service_role;
 
 -- Reads the plan for [p_from, p_to] as one JSON document: every date in the range (empty days
 -- included), each with its breakfast/lunch/dinner entries, per-person portions and kcal, and
@@ -171,7 +180,5 @@ end;
 $$;
 
 -- Server-only, like the tables.
-revoke all on function public.replace_meal_plan(date, date, jsonb, text) from public, anon, authenticated;
 revoke all on function public.get_meal_plan(date, date) from public, anon, authenticated;
-grant execute on function public.replace_meal_plan(date, date, jsonb, text) to service_role;
 grant execute on function public.get_meal_plan(date, date) to service_role;
