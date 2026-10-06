@@ -27,6 +27,7 @@ export default async function PlanPage({ searchParams }: { searchParams: Promise
       <nav className="weeknav" aria-label="Week">
         <Link href={`/plan?week=${addDays(monday, -7)}`}>← Previous</Link>
         <Link href="/plan">This week</Link>
+        <Link href={`/shopping?week=${monday}`}>Shopping list</Link>
         <Link href={`/plan?week=${addDays(monday, 7)}`}>Next →</Link>
       </nav>
       {error && <p className="error">{error}</p>}

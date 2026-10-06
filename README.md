@@ -48,6 +48,7 @@ override per entry, `0` = skips the meal). Weeks run Monday to Sunday.
 - Claude plans in chat via `save_meal_plan` (one call per week, atomic: a failure leaves the old plan untouched).
 - `/plan` in the web app shows the week read-only: portions, kcal per person per day vs target. Recipes with no kcal make that day's total partial (`*`).
 - Deleting a recipe removes it from any plan. Deleting a person removes their portions.
+- `/shopping` is the same week as a tick-off list grouped by aisle (quantities scale to the servings eaten, as in `get_plan_shopping_list`; the rules are duplicated in `web/src/lib/shopping.ts`, so change both together). Ticks are saved per week in the browser's localStorage, so each device keeps its own.
 - SQL: `replace_meal_plan(from, to, entries, meal?)` and `get_meal_plan(from, to)` hold the logic, so the MCP server and web app can't disagree.
 
 ## Photo import (`web/`)
